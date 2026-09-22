@@ -98,7 +98,7 @@ function paint(text: string, ranges: Range[]): ReactNode {
   return out
 }
 
-const TAGS: Record<Exclude<Block['type'], 'image' | 'code'>, keyof JSX.IntrinsicElements> = {
+const TAGS: Record<Exclude<Block['type'], 'image' | 'code' | 'table'>, keyof JSX.IntrinsicElements> = {
   h1: 'h2',
   h2: 'h3',
   h3: 'h4',
@@ -152,6 +152,38 @@ const BlockView = memo(function BlockView({
       <pre className={className} data-block={block.i} id={`block-${block.i}`}>
         <code>{paint(block.text, ranges)}</code>
       </pre>
+    )
+  }
+
+  if (block.type === 'table') {
+    const rows = block.rows ?? []
+    const headRow = block.tableHeader ? (rows[0] ?? null) : null
+    const bodyRows = block.tableHeader ? rows.slice(1) : rows
+    return (
+      <div className={className} data-block={block.i} id={`block-${block.i}`}>
+        <div className="table-scroll">
+          <table>
+            {headRow && (
+              <thead>
+                <tr>
+                  {headRow.map((cell, index) => (
+                    <th key={index}>{cell}</th>
+                  ))}
+                </tr>
+              </thead>
+            )}
+            <tbody>
+              {bodyRows.map((row, rowIndex) => (
+                <tr key={rowIndex}>
+                  {row.map((cell, cellIndex) => (
+                    <td key={cellIndex}>{cell}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
     )
   }
 

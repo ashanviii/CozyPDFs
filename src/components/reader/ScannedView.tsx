@@ -10,10 +10,13 @@ export function ScannedView({
   data,
   onPage,
   scrollRef,
+  zoom = 1,
 }: {
   data: ArrayBuffer
   onPage: (page: number, total: number) => void
   scrollRef: React.RefObject<HTMLDivElement>
+  /** 1 = fit width, up to 3 = 300% — pinch-zoomed in from the reader. */
+  zoom?: number
 }) {
   const [pdf, setPdf] = useState<PdfDoc | null>(null)
   const [count, setCount] = useState(0)
@@ -79,21 +82,23 @@ export function ScannedView({
   }, [pdf, count, onPage, scrollRef])
 
   return (
-    <div className="pages" ref={containerRef}>
-      <p className="pages__note">
-        This PDF is a scan — there is no text layer to reflow, so cozypdf shows the original pages.
-        Reading settings and Listen Mode need selectable text.
-      </p>
-      {Array.from({ length: count }, (_, index) => (
-        <div
-          key={index}
-          data-page={index + 1}
-          style={{ width: '100%', maxWidth: 900, aspectRatio: `1 / ${ratio}` }}
-        >
-          <canvas style={{ width: '100%' }} />
-        </div>
-      ))}
-      {!count && <span className="spinner" />}
+    <div className="pages-zoom-wrap" style={{ overflowX: zoom > 1.01 ? 'auto' : 'hidden' }}>
+      <div className="pages" ref={containerRef} style={{ width: `${zoom * 100}%`, minWidth: '100%' }}>
+        <p className="pages__note">
+          This PDF is a scan — there is no text layer to reflow, so cozypdf shows the original pages.
+          Reading settings and Listen Mode need selectable text.
+        </p>
+        {Array.from({ length: count }, (_, index) => (
+          <div
+            key={index}
+            data-page={index + 1}
+            style={{ width: '100%', maxWidth: 900 * zoom, aspectRatio: `1 / ${ratio}` }}
+          >
+            <canvas style={{ width: '100%' }} />
+          </div>
+        ))}
+        {!count && <span className="spinner" />}
+      </div>
     </div>
   )
 }

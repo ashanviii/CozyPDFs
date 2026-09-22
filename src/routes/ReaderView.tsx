@@ -20,6 +20,7 @@ import {
 } from '../components/reader/panels'
 import { ListenBar } from '../components/reader/ListenBar'
 import { ScannedView } from '../components/reader/ScannedView'
+import { usePinchZoom } from '../lib/usePinchZoom'
 import { useSettings } from '../state/settings'
 import { useLibrary } from '../state/library'
 import { useToast } from '../state/toast'
@@ -56,9 +57,20 @@ export function ReaderView({ bookId }: { bookId: string }) {
   const [blockIndex, setBlockIndex] = useState(0)
   const [percent, setPercent] = useState(0)
   const [segmentIndex, setSegmentIndex] = useState(0)
+  // Scroll mode's own windowing: blocks render from the start of the book up
+  // through this segment only, growing forward as the reader nears the
+  // bottom (and jumping straight to whatever segment a search/TOC/bookmark
+  // target needs). A long novel's later chapters never touch the DOM until
+  // the reader is actually approaching them.
+  const [renderedThrough, setRenderedThrough] = useState(0)
   const [page, setPage] = useState(0)
   const [pageCount, setPageCount] = useState(1)
   const [scanPage, setScanPage] = useState(1)
+  // How far a pinch has zoomed a scanned book's page images in (1 = fit
+  // width, up to 3 = 300%) — meaningless for reflowed text, which zooms via
+  // the text-size setting instead.
+  const [scanZoom, setScanZoom] = useState(1)
+  const [zoomHint, setZoomHint] = useState<string | null>(null)
 
   const [immersive, setImmersive] = useState(false)
   const [panel, setPanel] = useState<Panel>('none')
@@ -83,6 +95,9 @@ export function ReaderView({ bookId }: { bookId: string }) {
   const pendingJump = useRef<number | null>(null)
   const lastScrollTop = useRef(0)
   const restored = useRef(false)
+  const windowInitialized = useRef(false)
+  const pinchBase = useRef(1)
+  const zoomHintTimer = useRef<number>()
 
   const blocks = doc?.blocks ?? []
   const chapters = doc?.chapters ?? []
@@ -93,6 +108,9 @@ export function ReaderView({ bookId }: { bookId: string }) {
   useEffect(() => {
     let cancelled = false
     restored.current = false
+    windowInitialized.current = false
+    setRenderedThrough(0)
+    setScanZoom(1)
     setStatus('loading')
     setDoc(null)
     setScanData(null)
@@ -145,14 +163,29 @@ export function ReaderView({ bookId }: { bookId: string }) {
 
   const segments = useMemo(() => buildSegments(blocks, chapters), [blocks, chapters])
   const chapterStarts = useMemo(() => chapterStartSet(chapters), [chapters])
+
+  // Once a freshly-opened book's segments are known, make sure scroll mode's
+  // render window already covers wherever the reader is resuming to —
+  // otherwise the very first paint would try to restore a scroll position
+  // for a block that was never rendered. Runs once per book; ordinary
+  // scrolling afterward grows the window itself, in onScroll below.
+  useEffect(() => {
+    if (windowInitialized.current || !segments.length) return
+    windowInitialized.current = true
+    setRenderedThrough(segmentForBlock(segments, blockIndex))
+  }, [segments, blockIndex])
   const currentChapter = blocks[blockIndex]?.chapter ?? 0
   const mode = isScanned ? 'scroll' : settings.mode
 
   const visibleBlocks = useMemo(() => {
-    if (mode !== 'page') return blocks
-    const segment = segments[Math.min(segmentIndex, segments.length - 1)]
-    return segment ? blocks.slice(segment.start, segment.end) : blocks
-  }, [blocks, mode, segmentIndex, segments])
+    if (mode === 'page') {
+      const segment = segments[Math.min(segmentIndex, segments.length - 1)]
+      return segment ? blocks.slice(segment.start, segment.end) : blocks
+    }
+    if (!segments.length) return blocks
+    const through = segments[Math.min(renderedThrough, segments.length - 1)]
+    return through ? blocks.slice(0, through.end) : blocks
+  }, [blocks, mode, segmentIndex, segments, renderedThrough])
 
   const bookmarks = useMemo(
     () => new Set(annotations.filter((a) => a.kind === 'bookmark').map((a) => a.blockIndex)),
@@ -282,13 +315,48 @@ export function ReaderView({ bookId }: { bookId: string }) {
     setPercent(clamp(top / span, 0, 1))
     setBlockIndex(topBlockIndex(flow, top))
 
+    // Within a screen or so of the bottom of what's actually rendered, grow
+    // the window by one more segment — the same chapter-sized chunks used
+    // for page mode, so a long novel never has to put its whole DOM up
+    // front, only what the reader is about to reach.
+    const remaining = scroller.scrollHeight - (top + scroller.clientHeight)
+    if (remaining < scroller.clientHeight * 1.5 && renderedThrough < segments.length - 1) {
+      setRenderedThrough((r) => Math.min(segments.length - 1, r + 1))
+    }
+
     // Chrome gets out of the way on the way down, and comes back on the way up.
     const delta = top - lastScrollTop.current
     if (Math.abs(delta) > 36) {
       setImmersive(delta > 0 && top > 120)
       lastScrollTop.current = top
     }
-  }, [mode])
+  }, [mode, renderedThrough, segments.length])
+
+  /* -------------------------------------------------------------- zoom -- */
+
+  // A two-finger pinch zooms text size for a reflowed book (matching the
+  // existing "Aa" text-size setting, so the two stay in sync) or the page
+  // image itself for a scan, where there is no text to resize.
+  usePinchZoom(scrollRef, {
+    onStart: () => {
+      pinchBase.current = isScanned ? scanZoom : settings.fontSize
+    },
+    onPinch: (scale) => {
+      if (isScanned) {
+        const next = clamp(pinchBase.current * scale, 1, 3)
+        setScanZoom(next)
+        setZoomHint(`${Math.round(next * 100)}%`)
+      } else {
+        const next = clamp(Math.round(pinchBase.current * scale), 14, 30)
+        if (next !== settings.fontSize) set('fontSize', next)
+        setZoomHint(`${next}px`)
+      }
+      window.clearTimeout(zoomHintTimer.current)
+    },
+    onEnd: () => {
+      zoomHintTimer.current = window.setTimeout(() => setZoomHint(null), 600)
+    },
+  })
 
   /* ------------------------------------------------- jumping & restoring -- */
 
@@ -316,6 +384,10 @@ export function ReaderView({ bookId }: { bookId: string }) {
     const element = flow.querySelector<HTMLElement>(`[data-block="${target}"]`)
     if (!element) {
       if (mode === 'page') setSegmentIndex(segmentForBlock(segments, target))
+      // A jump can land ahead of scroll mode's own render window (a TOC
+      // entry or a search hit two chapters further than the reader has
+      // scrolled) — pull the window up to include it and retry next paint.
+      else setRenderedThrough((r) => Math.max(r, segmentForBlock(segments, target)))
       return // the right segment will render next tick
     }
 
@@ -327,8 +399,13 @@ export function ReaderView({ bookId }: { bookId: string }) {
         pendingJump.current = null
       }
     } else {
+      // Always instant, never the CSS-smooth scroll used for organic wheel/
+      // touch scrolling — an in-flight smooth animation can straddle several
+      // scroll events, and each of those can grow the render window (below),
+      // which mutates the scroller's content mid-animation and makes most
+      // browsers just cancel it, leaving the jump stuck wherever it started.
       const previous = scroller.style.scrollBehavior
-      if (!restored.current) scroller.style.scrollBehavior = 'auto'
+      scroller.style.scrollBehavior = 'auto'
       // Clear the top bar so a jumped-to heading is never tucked underneath it.
       scroller.scrollTo({ top: target === 0 ? 0 : Math.max(0, element.offsetTop - 88) })
       scroller.style.scrollBehavior = previous
@@ -837,7 +914,7 @@ export function ReaderView({ bookId }: { bookId: string }) {
         onClick={onFlowClick}
       >
         {isScanned && scanData ? (
-          <ScannedView data={scanData} scrollRef={scrollRef} onPage={onScanPage} />
+          <ScannedView data={scanData} scrollRef={scrollRef} onPage={onScanPage} zoom={scanZoom} />
         ) : (
           <Flow
             blocks={visibleBlocks}
@@ -853,6 +930,12 @@ export function ReaderView({ bookId }: { bookId: string }) {
           />
         )}
       </div>
+
+      {zoomHint && (
+        <div className="zoom-hint" aria-hidden="true">
+          {zoomHint}
+        </div>
+      )}
 
       {mode === 'page' && (
         <>

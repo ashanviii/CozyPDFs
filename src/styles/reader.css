@@ -245,6 +245,51 @@
   padding: 0;
 }
 
+/* Tables — kept as real rows and columns, never flattened into run-on text.
+   The table itself may be wider than the reading column, so only it (not
+   the whole page) scrolls sideways. */
+.flow .b-table {
+  margin: 0 0 var(--para-space);
+  text-align: start;
+}
+
+.flow .table-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-md);
+}
+
+.flow .b-table table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.92em;
+  font-family: var(--font-ui);
+  hyphens: none;
+}
+
+.flow .b-table th,
+.flow .b-table td {
+  padding: 8px 12px;
+  text-align: start;
+  vertical-align: top;
+  border-bottom: 1px solid var(--line-soft);
+  white-space: pre-wrap;
+}
+
+.flow .b-table thead th {
+  background: var(--surface-2);
+  font-weight: 600;
+  border-bottom: 1px solid var(--line);
+}
+
+.flow .b-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.flow .b-table tbody tr:nth-child(even) {
+  background: color-mix(in oklab, var(--surface-2) 45%, transparent);
+}
+
 /* Images embedded in the book's own pages. */
 .flow .b-image {
   margin: 1.3em 0;
@@ -400,6 +445,11 @@ mark.has-note {
 }
 
 /* Scanned fallback ------------------------------------------------------ */
+
+.pages-zoom-wrap {
+  width: 100%;
+  -webkit-overflow-scrolling: touch;
+}
 
 .pages {
   display: flex;
@@ -921,6 +971,27 @@ mark.has-note {
 
 .tap-zone--next {
   right: 0;
+}
+
+/* Pinch-zoom hint -------------------------------------------------------- */
+
+.zoom-hint {
+  position: fixed;
+  top: calc(70px + var(--safe-t));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+  padding: 8px 16px;
+  border-radius: var(--r-md);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-2);
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  pointer-events: none;
+  animation: fade 120ms var(--ease) both;
 }
 
 /* Reading-time chip in the bottom bar ----------------------------------- */

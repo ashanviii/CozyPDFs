@@ -57,6 +57,9 @@ interface Line {
   links?: LinkSpan[]
   /** Set when this "line" is really a picture standing in the text flow. */
   image?: { src: string; width: number; height: number }
+  /** Set when this "line" is really a whole table, detected from a run of
+   *  rows whose cells line up column to column. */
+  table?: { rows: string[][]; header: boolean }
 }
 
 const BULLET = /^\s*(?:[•▪◦‣·*]|[-–—]\s|\(?\d{1,2}[.)]\s|[a-z][.)]\s)/i
@@ -71,6 +74,58 @@ const CLOSES = /[.!?"”’)]$/
 const HYPHEN_END = /[a-z][-‐­]$/i
 
 /* ------------------------------------------------------------ utilities ---- */
+
+// Standard ligatures, expanded to their plain letters — a PDF's ﬁ and fi are
+// the same two letters typeset differently, not different text.
+const LIGATURES: Record<string, string> = {
+  'ﬀ': 'ff',
+  'ﬁ': 'fi',
+  'ﬂ': 'fl',
+  'ﬃ': 'ffi',
+  'ﬄ': 'ffl',
+  'ﬅ': 'st',
+  'ﬆ': 'st',
+}
+const LIGATURE_RE = /[ﬀ-ﬆ]/g
+
+// Invisible formatting characters that sometimes leak into a PDF's text
+// layer — zero-width joiners, a byte-order mark, word joiners. They carry no
+// reading content, only whitespace/no-break bugs if left in.
+const INVISIBLE_RE = /[​‌‍⁠﻿]/g
+
+// The handful of smart-punctuation sequences that appear when a PDF's UTF-8
+// text got double-decoded as Windows-1252 (a very common "badly encoded
+// PDF" bug). Each pattern is an exact three-character sequence that is, in
+// practice, never legitimate running text on its own — only ever this one
+// specific mis-encoding — so replacing it can't change a word, only repair
+// punctuation that was already broken by the PDF's own export step.
+const MOJIBAKE: [RegExp, string][] = [
+  [/â€™/g, '’'], // â€™ → ’
+  [/â€˜/g, '‘'], // â€˜ → ‘
+  [/â€œ/g, '“'], // â€œ → “
+  [/â€/g, '”'], // â€\x9D → ”
+  [/â€“/g, '–'], // â€“ → –
+  [/â€”/g, '—'], // â€” → —
+  [/â€¦/g, '…'], // â€¦ → …
+]
+
+/**
+ * Cleans up characters, not content: expands ligatures, strips invisible
+ * formatting artifacts, folds a non-breaking space to a normal one, and
+ * repairs the specific UTF-8-as-Windows-1252 mis-encoding that shows up as
+ * "â€™" in place of a smart quote. Never touches real letters, words or
+ * punctuation an author actually chose — only glyph-level noise a PDF
+ * exporter introduced.
+ */
+function normalizeGlyphs(s: string): string {
+  if (!s) return s
+  let out = s.normalize('NFC')
+  if (LIGATURE_RE.test(out)) out = out.replace(LIGATURE_RE, (ch) => LIGATURES[ch] ?? ch)
+  out = out.replace(INVISIBLE_RE, '')
+  out = out.replace(/ /g, ' ')
+  for (const [pattern, replacement] of MOJIBAKE) out = out.replace(pattern, replacement)
+  return out
+}
 
 const median = (xs: number[]) => {
   if (!xs.length) return 0
@@ -246,6 +301,264 @@ interface RawItem {
 /** pdf.js's per-page `getTextContent()` companion: generic family per font key. */
 type PageStyles = Record<string, { fontFamily?: string } | undefined>
 
+interface Piece {
+  str: string
+  x: number
+  y: number
+  w: number
+  size: number
+  font: string
+}
+
+/**
+ * Turns one baseline's worth of pieces into a single `Line`: joins the text
+ * left to right (inserting a space only where the horizontal gap implies
+ * one), and maps any link rects onto the resulting character offsets.
+ */
+function buildLine(
+  bucket: Piece[],
+  bucketY: number,
+  page: number,
+  pageLinks: PageLinkRect[],
+  styles: PageStyles,
+): Line | null {
+  if (!bucket.length) return null
+  bucket.sort((a, b) => a.x - b.x)
+  const size = median(bucket.map((p) => p.size))
+  let text = ''
+  let cursor = -Infinity
+
+  // Link ranges are computed at piece granularity as the text is built, so
+  // their offsets land exactly where each piece ends up in the final string.
+  const runs: LinkSpan[] = []
+
+  for (const piece of bucket) {
+    const gap = piece.x - cursor
+    if (text && gap > size * 0.16 && !/\s$/.test(text) && !/^\s/.test(piece.str)) text += ' '
+    const pieceStart = text.length
+    text += piece.str
+    cursor = piece.x + piece.w
+
+    if (pageLinks.length) {
+      for (const hit of linkRangesForPiece(pageLinks, piece, bucketY)) {
+        runs.push({ start: pieceStart + hit.start, end: pieceStart + hit.end, href: hit.href, page: hit.page })
+      }
+    }
+  }
+
+  // Collapsing whitespace can only ever remove leading characters in
+  // practice (pieces are joined with at most one space) — shift for that.
+  const collapsed = text.replace(/\s+/g, ' ')
+  const lead = collapsed.length - collapsed.trimStart().length
+  text = collapsed.trim()
+  if (!text) return null
+
+  // The font key that covers the most characters on this line — a
+  // reasonable single "what font is this line" answer even when a line
+  // mixes a few glyphs of another face (e.g. a lone italic word).
+  const weights = new Map<string, number>()
+  for (const piece of bucket) weights.set(piece.font, (weights.get(piece.font) ?? 0) + piece.str.length)
+  let font = bucket[0].font
+  let fontWeight = -1
+  for (const [key, weight] of weights) {
+    if (weight > fontWeight) {
+      font = key
+      fontWeight = weight
+    }
+  }
+
+  const links = runs.length
+    ? mergeLinkSpans(
+        runs.map((r) => ({ ...r, start: r.start - lead, end: r.end - lead })),
+        text.length,
+      )
+    : undefined
+
+  return {
+    text,
+    x0: bucket[0].x,
+    x1: cursor,
+    y: bucketY,
+    size,
+    page,
+    font,
+    // Every piece has to be monospace, not just one — otherwise a single
+    // inline `code word` in an ordinary sentence would turn its whole line,
+    // and every line like it, into a false-positive code block.
+    mono: bucket.every((p) => styles[p.font]?.fontFamily === 'monospace'),
+    band: 0,
+    links,
+  }
+}
+
+/** Joins pieces left to right into one string, inserting a space only where
+ *  the horizontal gap implies one — the same rule `buildLine` uses, minus
+ *  the link-offset bookkeeping a table cell doesn't need. */
+function joinPieces(pieces: Piece[]): string {
+  const sorted = [...pieces].sort((a, b) => a.x - b.x)
+  const size = median(sorted.map((p) => p.size)) || 10
+  let text = ''
+  let cursor = -Infinity
+  for (const piece of sorted) {
+    const gap = piece.x - cursor
+    if (text && gap > size * 0.16 && !/\s$/.test(text) && !/^\s/.test(piece.str)) text += ' '
+    text += piece.str
+    cursor = piece.x + piece.w
+  }
+  return text.replace(/\s+/g, ' ').trim()
+}
+
+/** A gap this many times the font size marks a cell boundary. Real tables
+ *  with narrow columns often have gaps not much wider than a normal
+ *  word-space (an inter-word gap here runs under ~0.2× the font size, so
+ *  this sits with real margin above that while staying well under a
+ *  two-column gutter) — the multi-row alignment check below is the main
+ *  defence against a merely generously-spaced line of prose being mistaken
+ *  for a table, not this threshold alone. */
+const CELL_GAP_MULT = 0.7
+
+interface TableRun {
+  start: number
+  end: number // exclusive
+  rows: string[][]
+  header: boolean
+}
+
+/**
+ * Finds runs of three or more consecutive baseline clusters that read as a
+ * table: each row splits into two or more cells at gaps clearly wider than
+ * a normal word-space, and those cells' start positions line up from row to
+ * row. This works whether or not the table is actually ruled — most of a
+ * table's structure is in its whitespace, not its lines.
+ */
+function detectTables(clusters: { y: number; pieces: Piece[] }[]) {
+  const used = new Set<number>()
+  const runs: TableRun[] = []
+
+  // Only used once per candidate table, to discover its column layout from
+  // the first row's own gaps — there is nothing else to go on yet.
+  const cellsOf = (cluster: { pieces: Piece[] }) => {
+    if (cluster.pieces.length < 2) return null
+    const sorted = [...cluster.pieces].sort((a, b) => a.x - b.x)
+    const size = median(sorted.map((p) => p.size)) || 10
+    const cells: { x0: number; pieces: Piece[] }[] = [{ x0: sorted[0].x, pieces: [sorted[0]] }]
+    let cursor = sorted[0].x + sorted[0].w
+    for (let i = 1; i < sorted.length; i++) {
+      const piece = sorted[i]
+      const gap = piece.x - cursor
+      if (gap > size * CELL_GAP_MULT) cells.push({ x0: piece.x, pieces: [piece] })
+      else cells[cells.length - 1].pieces.push(piece)
+      cursor = Math.max(cursor, piece.x + piece.w)
+    }
+    // The first row needs three or more cells, not just two — a lone wide
+    // gap is exactly what a loosely justified line of ordinary prose looks
+    // like, and this is the row that gets to define the table's columns.
+    return cells.length >= 3 ? cells : null
+  }
+
+  /**
+   * Assigns every piece in a row directly to its nearest known column, by
+   * position — not by re-detecting gaps on each row. A long value ("6,392,017")
+   * leaves less trailing gap before the next column than a short one
+   * ("710,231") does, even though both start at the same column; splitting
+   * fresh on every row's own gaps conflates "how wide is this value" with
+   * "which column is this", which corrupts exactly the rows whose numbers
+   * happen to run long. Proximity to the established column start doesn't
+   * have that problem. Returns null if some piece doesn't land near any
+   * column — a sign this row isn't really part of the table after all.
+   */
+  const assignToColumns = (pieces: Piece[], columns: number[]): string[] | null => {
+    const size = median(pieces.map((p) => p.size)) || 10
+    const tolerance = Math.max(10, size * 1.3)
+    const byColumn: Piece[][] = columns.map(() => [])
+    for (const piece of pieces) {
+      let best = -1
+      let bestDist = Infinity
+      for (let c = 0; c < columns.length; c++) {
+        const d = Math.abs(piece.x - columns[c])
+        if (d < bestDist) {
+          bestDist = d
+          best = c
+        }
+      }
+      if (best === -1 || bestDist > tolerance) return null
+      byColumn[best].push(piece)
+    }
+    // A genuine continuation row has to actually use more than one column —
+    // otherwise this is just an ordinary paragraph that happens to start at
+    // the same x as the table's first column, not another row of it.
+    if (byColumn.filter((group) => group.length).length < 2) return null
+    return byColumn.map((group) => (group.length ? joinPieces(group) : ''))
+  }
+
+  // A single cell that's too wide for its column wraps onto its own line —
+  // one that, unlike a real row, touches only that one column. Restricted to
+  // columns after the first: an ordinary paragraph below the table that
+  // happens to start at the table's left margin looks exactly like this
+  // otherwise, and would silently get swallowed into the last row instead of
+  // ending the table where it should.
+  const continuationCell = (pieces: Piece[], columns: number[]): { index: number; text: string } | null => {
+    const size = median(pieces.map((p) => p.size)) || 10
+    const tolerance = Math.max(10, size * 1.3)
+    let index = -1
+    for (const piece of pieces) {
+      let best = -1
+      let bestDist = Infinity
+      for (let c = 0; c < columns.length; c++) {
+        const d = Math.abs(piece.x - columns[c])
+        if (d < bestDist) {
+          bestDist = d
+          best = c
+        }
+      }
+      if (best === -1 || bestDist > tolerance) return null
+      if (index === -1) index = best
+      else if (index !== best) return null
+    }
+    return index > 0 ? { index, text: joinPieces(pieces) } : null
+  }
+
+  // A trailing dash means the wrapped value continues with no space
+  // ("4,232,659–" + "7,901,691"); anything else gets an ordinary word space.
+  const joinWrapped = (cell: string, more: string) => (/[-‐–—]$/.test(cell) ? cell + more : `${cell} ${more}`.trim())
+
+  let i = 0
+  while (i < clusters.length) {
+    const firstCells = cellsOf(clusters[i])
+    if (!firstCells) {
+      i++
+      continue
+    }
+
+    const columns = firstCells.map((c) => c.x0)
+    const rows: string[][] = [firstCells.map((c) => joinPieces(c.pieces))]
+    let j = i + 1
+    while (j < clusters.length) {
+      const assigned = assignToColumns(clusters[j].pieces, columns)
+      if (assigned) {
+        rows.push(assigned)
+        j++
+        continue
+      }
+      const wrapped = continuationCell(clusters[j].pieces, columns)
+      if (!wrapped) break
+      const last = rows[rows.length - 1]
+      last[wrapped.index] = joinWrapped(last[wrapped.index], wrapped.text)
+      j++
+    }
+
+    if (rows.length >= 3) {
+      runs.push({ start: i, end: j, rows, header: true })
+      for (let k = i; k < j; k++) used.add(k)
+      i = j
+    } else {
+      i++
+    }
+  }
+
+  return { runs, used }
+}
+
 function itemsToLines(
   items: RawItem[],
   page: number,
@@ -253,111 +566,139 @@ function itemsToLines(
   pageLinks: PageLinkRect[],
   styles: PageStyles,
 ): Line[] {
-  interface Piece {
-    str: string
-    x: number
-    y: number
-    w: number
-    size: number
-    font: string
-  }
   const pieces: Piece[] = []
+  // A PDF that fakes bold by painting the same glyphs twice a fraction of a
+  // point apart is common enough to guard against explicitly — without this
+  // it reads back as "Thee qquuiicckk brroowwn". Keyed loosely (rounded
+  // position, exact text) so the second paint of the same run is dropped.
+  const seenPaint = new Set<string>()
   for (const item of items) {
     if (!item.str || !item.str.trim()) continue
+    const str = normalizeGlyphs(item.str)
+    if (!str.trim()) continue
     const t = item.transform
     const size = Math.hypot(t[2], t[3]) || Math.hypot(t[0], t[1]) || 12
-    pieces.push({ str: item.str, x: t[4], y: t[5], w: item.width, size, font: item.fontName ?? '' })
+    const paintKey = `${str}|${Math.round(t[4] * 2) / 2}|${Math.round(t[5] * 2) / 2}`
+    if (seenPaint.has(paintKey)) continue
+    seenPaint.add(paintKey)
+    pieces.push({ str, x: t[4], y: t[5], w: item.width, size, font: item.fontName ?? '' })
   }
   if (!pieces.length) return []
 
   // Baselines first, then left-to-right inside each baseline.
   pieces.sort((a, b) => b.y - a.y || a.x - b.x)
 
-  const lines: Line[] = []
+  // Pass 1: group into baseline clusters only — no text joining yet. Two
+  // columns often share the same baseline (this is normal typesetting, not
+  // an edge case), and if we joined text at this stage we'd silently splice
+  // the end of a left-column line onto the start of the right-column line
+  // that happens to sit beside it — corrupting both, not just misordering
+  // them. Column-awareness has to happen before a single character is
+  // joined, not as a cleanup pass afterward.
+  interface Cluster {
+    y: number
+    pieces: Piece[]
+  }
+  const clusters: Cluster[] = []
   let bucket: Piece[] = []
   let bucketY = pieces[0].y
-
-  const flush = () => {
-    if (!bucket.length) return
-    bucket.sort((a, b) => a.x - b.x)
-    const size = median(bucket.map((p) => p.size))
-    let text = ''
-    let cursor = -Infinity
-
-    // Link ranges are computed at piece granularity as the text is built, so
-    // their offsets land exactly where each piece ends up in the final string.
-    const runs: LinkSpan[] = []
-
-    for (const piece of bucket) {
-      const gap = piece.x - cursor
-      if (text && gap > size * 0.16 && !/\s$/.test(text) && !/^\s/.test(piece.str)) text += ' '
-      const pieceStart = text.length
-      text += piece.str
-      cursor = piece.x + piece.w
-
-      if (pageLinks.length) {
-        for (const hit of linkRangesForPiece(pageLinks, piece, bucketY)) {
-          runs.push({ start: pieceStart + hit.start, end: pieceStart + hit.end, href: hit.href, page: hit.page })
-        }
-      }
-    }
-
-    // Collapsing whitespace can only ever remove leading characters in
-    // practice (pieces are joined with at most one space) — shift for that.
-    const collapsed = text.replace(/\s+/g, ' ')
-    const lead = collapsed.length - collapsed.trimStart().length
-    text = collapsed.trim()
-
-    if (text) {
-      // The font key that covers the most characters on this line — a
-      // reasonable single "what font is this line" answer even when a line
-      // mixes a few glyphs of another face (e.g. a lone italic word).
-      const weights = new Map<string, number>()
-      for (const piece of bucket) weights.set(piece.font, (weights.get(piece.font) ?? 0) + piece.str.length)
-      let font = bucket[0].font
-      let fontWeight = -1
-      for (const [key, weight] of weights) {
-        if (weight > fontWeight) {
-          font = key
-          fontWeight = weight
-        }
-      }
-
-      const links = runs.length
-        ? mergeLinkSpans(
-            runs.map((r) => ({ ...r, start: r.start - lead, end: r.end - lead })),
-            text.length,
-          )
-        : undefined
-      lines.push({
-        text,
-        x0: bucket[0].x,
-        x1: cursor,
-        y: bucketY,
-        size,
-        page,
-        font,
-        // Every piece has to be monospace, not just one — otherwise a single
-        // inline `code word` in an ordinary sentence would turn its whole
-        // line, and every line like it, into a false-positive code block.
-        mono: bucket.every((p) => styles[p.font]?.fontFamily === 'monospace'),
-        band: 0,
-        links,
-      })
-    }
-    bucket = []
-  }
-
   for (const piece of pieces) {
     const tolerance = Math.max(1.2, piece.size * 0.45)
     if (bucket.length && Math.abs(piece.y - bucketY) > tolerance) {
-      flush()
-      bucketY = piece.y
+      clusters.push({ y: bucketY, pieces: bucket })
+      bucket = []
     }
     if (!bucket.length) bucketY = piece.y
     bucket.push(piece)
   }
-  flush()
+  if (bucket.length) clusters.push({ y: bucketY, pieces: bucket })
+
+  // Pass 1b: pull out anything that reads as a table before column-gutter
+  // detection gets a look — a table's cell gaps are a different phenomenon
+  // and would otherwise pollute (or even masquerade as) a page gutter.
+  const { runs: tableRuns, used: tableClusterIndices } = detectTables(clusters)
+
+  // Pass 2: look for a page-wide column gutter — a horizontal gap far wider
+  // than any normal word-space, recurring at roughly the same x across many
+  // baselines. A one-off wide gap (extra letter-spacing, a table-of-contents
+  // dot leader) doesn't count; only a position several baselines agree on.
+  const gutterVotes: number[] = []
+  for (let ci = 0; ci < clusters.length; ci++) {
+    if (tableClusterIndices.has(ci)) continue
+    const cluster = clusters[ci]
+    if (cluster.pieces.length < 2) continue
+    const sorted = [...cluster.pieces].sort((a, b) => a.x - b.x)
+    const size = median(sorted.map((p) => p.size)) || 10
+    let cursor = sorted[0].x + sorted[0].w
+    let maxGap = 0
+    let maxGapMid = 0
+    for (let i = 1; i < sorted.length; i++) {
+      const piece = sorted[i]
+      const gap = piece.x - cursor
+      if (gap > maxGap) {
+        maxGap = gap
+        maxGapMid = (cursor + piece.x) / 2
+      }
+      cursor = Math.max(cursor, piece.x + piece.w)
+    }
+    if (maxGap > Math.max(10, size * 2.4)) gutterVotes.push(maxGapMid)
+  }
+
+  let gutterX: number | null = null
+  if (gutterVotes.length >= Math.max(4, clusters.length * 0.25)) {
+    const candidate = modeOf(gutterVotes, 8)
+    const votesForCandidate = gutterVotes.filter((v) => Math.abs(v - candidate) < 8).length
+    // The candidate has to actually be a majority of the votes (not just the
+    // largest of many scattered ones), and sit away from the page edges.
+    if (
+      votesForCandidate >= gutterVotes.length * 0.6 &&
+      candidate > pageWidth * 0.25 &&
+      candidate < pageWidth * 0.75
+    ) {
+      gutterX = candidate
+    }
+  }
+
+  // Pass 3: build lines, splitting each cluster at the gutter when one was
+  // found so left- and right-column text never shares a Line — except a
+  // table's clusters, which become one table Line each instead, positioned
+  // at their first row so reading order still puts them exactly where they
+  // appeared.
+  const lines: Line[] = []
+  const tableRunByStart = new Map(tableRuns.map((run) => [run.start, run]))
+  for (let ci = 0; ci < clusters.length; ci++) {
+    const cluster = clusters[ci]
+    const run = tableRunByStart.get(ci)
+    if (run) {
+      const runXs = clusters.slice(run.start, run.end).flatMap((c) => c.pieces.map((p) => p.x))
+      lines.push({
+        text: '',
+        x0: runXs.length ? Math.min(...runXs) : 0,
+        x1: runXs.length ? Math.max(...runXs) : 0,
+        y: cluster.y,
+        size: 0,
+        page,
+        font: '',
+        mono: false,
+        band: 0,
+        table: { rows: run.rows, header: run.header },
+      })
+      continue
+    }
+    if (tableClusterIndices.has(ci)) continue // consumed by a run starting earlier
+
+    if (gutterX === null) {
+      const line = buildLine(cluster.pieces, cluster.y, page, pageLinks, styles)
+      if (line) lines.push(line)
+      continue
+    }
+    const left = cluster.pieces.filter((p) => p.x < gutterX!)
+    const right = cluster.pieces.filter((p) => p.x >= gutterX!)
+    const leftLine = buildLine(left, cluster.y, page, pageLinks, styles)
+    const rightLine = buildLine(right, cluster.y, page, pageLinks, styles)
+    if (leftLine) lines.push(leftLine)
+    if (rightLine) lines.push(rightLine)
+  }
 
   assignReadingBands(lines, pageWidth)
   lines.sort(compareLines)
@@ -380,13 +721,39 @@ function assignReadingBands(lines: Line[], pageWidth: number) {
     left.length >= 5 && right.length >= 5 && spanning.length <= Math.max(2, lines.length * 0.12)
   if (!isTwoColumn) return
 
+  // A short line — a narrow footer, a right-aligned page number — can be
+  // narrow enough to pass the plain left/right x-test even though it isn't
+  // really part of either column. Peel isolated outliers off each end
+  // before taking the extent, so one stray line can't redefine where the
+  // columns start and end — but by *gap*, not by a fixed count, since the
+  // two columns' top lines legitimately tie on y and a count-based trim
+  // would slice off both of them together.
   const columnLines = [...left, ...right]
-  const columnTop = Math.max(...columnLines.map((l) => l.y))
-  const columnBottom = Math.min(...columnLines.map((l) => l.y))
+  const ys = columnLines.map((l) => l.y).sort((a, b) => a - b)
+  const gaps: number[] = []
+  for (let i = 1; i < ys.length; i++) if (ys[i] !== ys[i - 1]) gaps.push(ys[i] - ys[i - 1])
+  const typicalGap = median(gaps) || 12
+  let lo = 0
+  let hi = ys.length - 1
+  while (lo < hi - 1 && ys[lo + 1] - ys[lo] > typicalGap * 2.5) lo++
+  while (hi > lo + 1 && ys[hi] - ys[hi - 1] > typicalGap * 2.5) hi--
+  const columnBottom = ys[lo]
+  const columnTop = ys[hi]
   for (const line of lines) {
-    const spans = line.x0 < mid - gutter && line.x1 > mid + gutter
-    if (spans) line.band = line.y > columnTop ? 0 : line.y < columnBottom ? 3 : 1.5
-    else line.band = line.x0 > mid - gutter ? 2 : 1
+    // Above or below the columns' own vertical extent, by position alone —
+    // a title or a footer doesn't have to visually span the full width to
+    // count as "not part of either column" (many don't: a short copyright
+    // line or a right-aligned page number is still column-external).
+    if (line.y > columnTop) {
+      line.band = 0
+    } else if (line.y < columnBottom) {
+      line.band = 3
+    } else {
+      const spans = line.x0 < mid - gutter && line.x1 > mid + gutter
+      // A rare full-width interruption between the columns (a figure, a
+      // rule) — keep it between them rather than forcing it into either.
+      line.band = spans ? 1.5 : line.x0 > mid - gutter ? 2 : 1
+    }
   }
 }
 
@@ -532,14 +899,14 @@ function assessGraphicPage(lines: Line[], imageBoxes: ImageBox[], pageWidth: num
   const coverage = imageArea / pageArea
 
   const words = lines.reduce(
-    (sum, l) => sum + (l.image ? 0 : l.text.split(/\s+/).filter(Boolean).length),
+    (sum, l) => sum + (l.image || l.table ? 0 : l.text.split(/\s+/).filter(Boolean).length),
     0,
   )
 
   let overlapping = 0
   let textLines = 0
   for (const line of lines) {
-    if (line.image) continue
+    if (line.image || line.table) continue
     textLines++
     const lineWidth = Math.max(1, line.x1 - line.x0)
     const overlapsArt = imageBoxes.some((box) => {
@@ -710,7 +1077,7 @@ function stripRunningHeads(pages: Line[][], pageHeights: number[]) {
   pages.forEach((lines, index) => {
     const height = pageHeights[index] || 792
     for (const line of lines) {
-      if (line.image || line.text.length > RUNNING_TEXT_MAX_LEN) continue
+      if (line.image || line.table || line.text.length > RUNNING_TEXT_MAX_LEN) continue
       const inHeader = line.y > height * HEADER_ZONE
       const inFooter = line.y < height * FOOTER_ZONE
       if (!inHeader && !inFooter) continue
@@ -732,7 +1099,7 @@ function stripRunningHeads(pages: Line[][], pageHeights: number[]) {
   return pages.map((lines, index) => {
     const height = pageHeights[index] || 792
     return lines.filter((line) => {
-      if (line.image) return true
+      if (line.image || line.table) return true
       const inHeader = line.y > height * HEADER_ZONE
       const inFooter = line.y < height * FOOTER_ZONE
       if (!inHeader && !inFooter) return true
@@ -751,19 +1118,48 @@ type Draft =
   | { kind: 'text'; lines: Line[]; heading: boolean; bullet: boolean; term: boolean; size: number; page: number }
   | { kind: 'code'; lines: Line[]; page: number }
   | { kind: 'image'; line: Line; page: number }
+  | { kind: 'table'; line: Line; page: number }
 
 function buildBlocks(pages: Line[][]): Block[] {
   // Code has its own geometry (a fixed-width font, its own indentation
-  // conventions) — mixing it into the body-margin and body-size statistics
-  // below would skew them for every other heuristic in this function.
-  const flat = pages.flat().filter((l) => !l.image && !l.mono)
+  // conventions), and a table's cell gaps are not paragraph margins — mixing
+  // either into the body-margin and body-size statistics below would skew
+  // them for every other heuristic in this function.
+  const flat = pages.flat().filter((l) => !l.image && !l.mono && !l.table)
   if (!flat.length) return []
 
   const bodySize = bodySizeOf(flat)
   const bodyLines = flat.filter((l) => Math.abs(l.size - bodySize) < bodySize * 0.12)
   const sample = bodyLines.length > 10 ? bodyLines : flat
-  const leftEdge = modeOf(sample.map((l) => l.x0), 2)
+  // The body margin, not simply the most common x0: a plain frequency mode
+  // assumes indentation "splits its votes across several distinct depths",
+  // but a book using only a single first-line-indent depth (common — most
+  // paragraphs, one indent level) concentrates all of *that* vote into one
+  // bucket, which a page of short dialogue (many one-line, i.e. all-indented
+  // paragraphs) can easily let outvote the flush margin outright. Indent
+  // only ever sits to the right of the true margin, never left of it, so
+  // among every x0 a meaningful share of lines actually start at, the
+  // leftmost one is the margin — not whichever got the single most votes.
+  const leftEdge = (() => {
+    const weights = new Map<number, number>()
+    for (const x of sample.map((l) => l.x0)) {
+      const key = Math.round(x / 2) * 2
+      weights.set(key, (weights.get(key) ?? 0) + 1)
+    }
+    const threshold = sample.length * 0.12
+    let best = Infinity
+    for (const [key, weight] of weights) {
+      if (weight >= threshold && key < best) best = key
+    }
+    return best === Infinity ? modeOf(sample.map((l) => l.x0), 2) : best
+  })()
   const rightEdge = median(sample.map((l) => l.x1))
+  // How far right text genuinely reaches, for deciding whether a hyphenated
+  // line was actually pushed to the margin (see the join loop below) — the
+  // median undersells this for ragged-right setting, where most lines end
+  // well short of the true column edge and only a few reach it.
+  const rightXs = sample.map((l) => l.x1).sort((a, b) => a - b)
+  const marginRight = rightXs[Math.min(rightXs.length - 1, Math.floor(rightXs.length * 0.92))] ?? rightEdge
 
   // The font resource key that carries most of the body text — pdf.js only
   // exposes a synthetic id per font, not a real name or weight/style flags,
@@ -787,13 +1183,42 @@ function buildBlocks(pages: Line[][]): Block[] {
   const gaps: number[] = []
   for (const lines of pages) {
     for (let i = 1; i < lines.length; i++) {
-      if (lines[i].image || lines[i - 1].image || lines[i].mono || lines[i - 1].mono) continue
+      if (
+        lines[i].image || lines[i - 1].image ||
+        lines[i].mono || lines[i - 1].mono ||
+        lines[i].table || lines[i - 1].table
+      )
+        continue
       if (lines[i].band !== lines[i - 1].band) continue
       const gap = lines[i - 1].y - lines[i].y
       if (gap > 0 && gap < bodySize * 4) gaps.push(gap)
     }
   }
   const lineGap = median(gaps) || bodySize * 1.2
+  // A single global "typical gap" breaks down exactly where novels are most
+  // interesting: dialogue. A page of short exchanges has a paragraph break
+  // after nearly every line, so "paragraph gaps" and "ordinary line gaps"
+  // can end up roughly equally common — pulling the median up into the
+  // paragraph-gap cluster and making it useless as a boundary between them.
+  // Finding the natural split between the two clusters (by the biggest jump
+  // in the sorted gaps) holds up in both the normal case and this one.
+  const paragraphGap = (() => {
+    if (gaps.length < 8) return lineGap * 1.45
+    const sorted = [...gaps].sort((a, b) => a - b)
+    let bestSplit = -1
+    let bestRatio = 1
+    for (let i = 1; i < sorted.length; i++) {
+      if (sorted[i] <= sorted[i - 1]) continue
+      const ratio = sorted[i] / Math.max(1, sorted[i - 1])
+      if (ratio > bestRatio) {
+        bestRatio = ratio
+        bestSplit = i
+      }
+    }
+    const clearSplit = bestSplit >= sorted.length * 0.15 && bestSplit <= sorted.length * 0.92
+    if (bestSplit < 0 || bestRatio < 1.3 || !clearSplit) return lineGap * 1.45
+    return (sorted[bestSplit - 1] + sorted[bestSplit]) / 2
+  })()
 
   const headingSizes = new Set<number>()
   const isHeading = (line: Line) => {
@@ -848,7 +1273,12 @@ function buildBlocks(pages: Line[][]): Block[] {
         continue
       }
 
-      const previous = i > 0 && !lines[i - 1].image ? lines[i - 1] : null
+      if (line.table) {
+        drafts.push({ kind: 'table', line, page: line.page })
+        continue
+      }
+
+      const previous = i > 0 && !lines[i - 1].image && !lines[i - 1].table ? lines[i - 1] : null
       const current = drafts[drafts.length - 1]
 
       // A run of lines set entirely in a monospace font is a code sample —
@@ -875,15 +1305,17 @@ function buildBlocks(pages: Line[][]): Block[] {
           breaks = previous.x1 < rightEdge - bodySize * 2.2 && CLOSES.test(previous.text)
         } else {
           const gap = previous.y - line.y
-          if (gap > lineGap * 1.45) breaks = true
+          if (gap > paragraphGap) breaks = true
           else if (line.x0 > leftEdge + bodySize * 0.7 && previous.x0 <= leftEdge + bodySize * 0.3)
             breaks = true // a first-line indent
-          else if (
-            previous.x1 < rightEdge - bodySize * 3 &&
-            CLOSES.test(previous.text) &&
-            line.x0 <= leftEdge + bodySize * 0.5
-          )
-            breaks = true // previous paragraph ran short and closed
+          else if (previous.x1 < rightEdge - bodySize * 3 && CLOSES.test(previous.text))
+            // The previous line ran short and closed a sentence — a new
+            // paragraph, whether or not this book also marks it with an
+            // indent. Checked without regard to this line's own position:
+            // requiring it to sit flush at the margin missed exactly the
+            // case that matters most, back-to-back single-line paragraphs
+            // (dialogue), where the *next* line is indented too.
+            breaks = true
         }
       }
 
@@ -920,6 +1352,21 @@ function buildBlocks(pages: Line[][]): Block[] {
       continue
     }
 
+    if (draft.kind === 'table') {
+      const table = draft.line.table!
+      blocks.push({
+        id: `b${blocks.length}`,
+        i: blocks.length,
+        type: 'table',
+        text: '',
+        page: draft.page,
+        chapter: 0,
+        rows: table.rows,
+        tableHeader: table.header,
+      })
+      continue
+    }
+
     if (draft.kind === 'code') {
       // Code needs its literal line breaks and indentation kept, not folded
       // into flowing prose — reconstruct each line's leading whitespace from
@@ -939,24 +1386,38 @@ function buildBlocks(pages: Line[][]): Block[] {
     }
 
     let text = ''
+    let previousLine: Line | null = null
     const links: LinkSpan[] = []
     for (const line of draft.lines) {
       let joinStart: number
       if (!text) {
         text = line.text
         joinStart = 0
-      } else if (HYPHEN_END.test(text) && /^[a-z]/.test(line.text)) {
-        text = text.slice(0, -1) + line.text
-        joinStart = text.length - line.text.length
       } else {
-        text += ' ' + line.text
-        joinStart = text.length - line.text.length
+        // A trailing hyphen only means "this word was broken across the
+        // line" when the line it ends was actually pushed out to the
+        // column's margin — that's *why* the typesetter had to hyphenate.
+        // "well-" almost never happens to land exactly at the margin too,
+        // so this tells a forced break apart from an ordinary hyphenated
+        // compound word without ever having to guess at the word itself.
+        const wasForcedBreak = previousLine && previousLine.x1 >= marginRight - bodySize * 1.15
+        if (wasForcedBreak && HYPHEN_END.test(text) && /^[a-z]/.test(line.text)) {
+          text = text.slice(0, -1) + line.text
+          joinStart = text.length - line.text.length
+        } else {
+          text += ' ' + line.text
+          joinStart = text.length - line.text.length
+        }
       }
       if (line.links) {
         for (const span of line.links) links.push({ ...span, start: span.start + joinStart, end: span.end + joinStart })
       }
+      previousLine = line
     }
-    text = text.replace(/\s+/g, ' ').trim()
+    // A soft hyphen (a discretionary break point) is only meaningful right
+    // at a line break, which the join above already resolved one way or the
+    // other — any that are still sitting mid-word here are just noise.
+    text = text.replace(/­/g, '').replace(/\s+/g, ' ').trim()
     if (!text) continue
 
     const mergedLinks = links.length ? mergeLinkSpans(links, text.length) : undefined
@@ -1045,7 +1506,9 @@ function chaptersFrom(blocks: Block[], outline: OutlineEntry[], title: string): 
       const candidates = blocks.filter((b) => b.page === entry.page && !used.has(b.i))
       const match =
         candidates.find((b) => b.text.toLowerCase().startsWith(key)) ??
-        candidates.find((b) => b.type !== 'p' && b.type !== 'list' && b.type !== 'image') ??
+        candidates.find(
+          (b) => b.type !== 'p' && b.type !== 'list' && b.type !== 'image' && b.type !== 'table' && b.type !== 'code',
+        ) ??
         candidates[0] ??
         blocks.find((b) => b.page >= entry.page)
       if (!match || chapters.some((c) => c.blockIndex === match.i)) continue
@@ -1282,6 +1745,3 @@ export async function renderPage(
 }
 
 export type PdfDoc = pdfjs.PDFDocumentProxy
-
-// TEMP DEBUG — remove before shipping.
-export const __debug = { itemsToLines, buildBlocks, bodySizeOf, median }

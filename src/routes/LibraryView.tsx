@@ -67,6 +67,10 @@ export function LibraryView({ folderId }: { folderId: string | null }) {
   const currentFolder = folders.find((folder) => folder.id === folderId)
   const heading =
     folderId === UNSORTED ? 'Unsorted' : currentFolder ? currentFolder.name : 'Your library'
+  // The true first-open state — nothing added yet anywhere, not just this
+  // folder or search — gets the simple "drop a PDF and start reading"
+  // framing; an empty folder or search still gets the ordinary empty state.
+  const isFirstRun = !folderId && !query && books.length === 0
 
   /* ------------------------------------------------------------- drops -- */
 
@@ -320,16 +324,24 @@ export function LibraryView({ folderId }: { folderId: string | null }) {
           {!loading && !visible.length ? (
             <div className="empty">
               <Icon name="book" size={30} />
-              <h2>{query ? 'Nothing matches that' : 'Your shelf is empty'}</h2>
+              <h2>
+                {query
+                  ? 'Nothing matches that'
+                  : isFirstRun
+                    ? 'Read your PDFs like books.'
+                    : 'Your shelf is empty'}
+              </h2>
               <p>
                 {query
                   ? 'Try a different title, author or file name.'
-                  : 'Drop a PDF anywhere on this page, or add one below. It is read on your device and stays there.'}
+                  : isFirstRun
+                    ? 'Drop a PDF here, or choose one below. No account needed — it stays on this device.'
+                    : 'Drop a PDF anywhere on this page, or add one below. It is read on your device and stays there.'}
               </p>
               {!query && (
                 <button type="button" className="btn btn--primary" onClick={pickFiles}>
                   <Icon name="upload" size={16} />
-                  Add a PDF
+                  {isFirstRun ? 'Choose a PDF' : 'Add a PDF'}
                 </button>
               )}
             </div>

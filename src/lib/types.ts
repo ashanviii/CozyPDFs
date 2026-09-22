@@ -34,7 +34,7 @@ export interface Book {
   deleted?: boolean
 }
 
-export type BlockType = 'h1' | 'h2' | 'h3' | 'p' | 'quote' | 'list' | 'caption' | 'image' | 'code'
+export type BlockType = 'h1' | 'h2' | 'h3' | 'p' | 'quote' | 'list' | 'caption' | 'image' | 'code' | 'table'
 
 /** A clickable run inside a block's text: an external URL or a jump to a page. */
 export interface LinkSpan {
@@ -68,6 +68,10 @@ export interface Block {
   /** `type: 'image'` only: natural size, for an aspect-ratio placeholder. */
   width?: number
   height?: number
+  /** `type: 'table'` only: one array of cell strings per row. */
+  rows?: string[][]
+  /** `type: 'table'` only: whether `rows[0]` is a header row. */
+  tableHeader?: boolean
 }
 
 export interface Chapter {
