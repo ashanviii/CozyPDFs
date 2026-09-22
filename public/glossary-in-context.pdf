@@ -1,0 +1,105 @@
+%PDF-1.4
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [8 0 R 10 0 R 12 0 R] /Count 3 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Times-Roman >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Times-BoldItalic >>
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Times-Bold >>
+endobj
+6 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>
+endobj
+7 0 obj
+<< /Length 816 >>
+stream
+BT /F1 11 Tf 1 0 0 1 84 708 Tm (The quick brown fox jumps over the lazy dog, again and again, across) Tj ET
+BT /F1 11 Tf 1 0 0 1 84 692 Tm (many otherwise unremarkable paragraphs that exist only to give this) Tj ET
+BT /F1 11 Tf 1 0 0 1 84 676 Tm (test document a realistic body margin to measure against.) Tj ET
+BT /F1 11 Tf 1 0 0 1 84 644 Tm (A second paragraph follows, still flush against the very same left) Tj ET
+BT /F1 11 Tf 1 0 0 1 84 628 Tm (margin as the first, the way ordinary prose in an ordinary book) Tj ET
+BT /F1 11 Tf 1 0 0 1 84 612 Tm (always does, page after page after page.) Tj ET
+BT /F1 11 Tf 1 0 0 1 84 580 Tm (And a third, for good measure, so the statistics are not thrown off) Tj ET
+BT /F1 11 Tf 1 0 0 1 84 564 Tm (by having too few lines of plain body text to outweigh anything else.) Tj ET
+endstream
+endobj
+8 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 7 0 R /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R /F4 6 0 R >> >> >>
+endobj
+9 0 obj
+<< /Length 1446 >>
+stream
+BT /F3 14 Tf 1 0 0 1 84 708 Tm (Key Terms for Data Types) Tj ET
+BT /F2 11 Tf 1 0 0 1 84 678 Tm (Numeric) Tj ET
+BT /F1 11 Tf 1 0 0 1 110 662 Tm (Data that are expressed on a numeric scale.) Tj ET
+BT /F2 11 Tf 1 0 0 1 110 640 Tm (Continuous) Tj ET
+BT /F1 11 Tf 1 0 0 1 136 624 Tm (Data that can take on any value in an interval.) Tj ET
+BT /F2 11 Tf 1 0 0 1 110 602 Tm (Discrete) Tj ET
+BT /F1 11 Tf 1 0 0 1 136 586 Tm (Data that can take on only integer values, such as counts.) Tj ET
+BT /F2 11 Tf 1 0 0 1 84 560 Tm (Categorical) Tj ET
+BT /F1 11 Tf 1 0 0 1 110 544 Tm (Data that can take on only a specific set of values.) Tj ET
+BT /F2 11 Tf 1 0 0 1 110 522 Tm (Binary) Tj ET
+BT /F1 11 Tf 1 0 0 1 136 506 Tm (A special case of categorical data with just two categories.) Tj ET
+BT /F2 11 Tf 1 0 0 1 110 484 Tm (Ordinal) Tj ET
+BT /F1 11 Tf 1 0 0 1 136 468 Tm (Categorical data that has an explicit ordering.) Tj ET
+BT /F3 14 Tf 1 0 0 1 84 436 Tm (Example Code) Tj ET
+BT /F4 10 Tf 1 0 0 1 84 406 Tm (import pandas as pd) Tj ET
+BT /F4 10 Tf 1 0 0 1 84 392 Tm () Tj ET
+BT /F4 10 Tf 1 0 0 1 84 378 Tm (def load\(path\):) Tj ET
+BT /F4 10 Tf 1 0 0 1 112.8 364 Tm (    df = pd.read_csv\(path\)) Tj ET
+BT /F4 10 Tf 1 0 0 1 112.8 350 Tm (    return df.dropna\(\)) Tj ET
+BT /F1 11 Tf 1 0 0 1 84 320 Tm (A closing paragraph after the code sample, to confirm normal prose) Tj ET
+BT /F1 11 Tf 1 0 0 1 84 304 Tm (continues to reflow exactly as it always has.) Tj ET
+endstream
+endobj
+10 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 9 0 R /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R /F4 6 0 R >> >> >>
+endobj
+11 0 obj
+<< /Length 816 >>
+stream
+BT /F1 11 Tf 1 0 0 1 84 708 Tm (The quick brown fox jumps over the lazy dog, again and again, across) Tj ET
+BT /F1 11 Tf 1 0 0 1 84 692 Tm (many otherwise unremarkable paragraphs that exist only to give this) Tj ET
+BT /F1 11 Tf 1 0 0 1 84 676 Tm (test document a realistic body margin to measure against.) Tj ET
+BT /F1 11 Tf 1 0 0 1 84 644 Tm (A second paragraph follows, still flush against the very same left) Tj ET
+BT /F1 11 Tf 1 0 0 1 84 628 Tm (margin as the first, the way ordinary prose in an ordinary book) Tj ET
+BT /F1 11 Tf 1 0 0 1 84 612 Tm (always does, page after page after page.) Tj ET
+BT /F1 11 Tf 1 0 0 1 84 580 Tm (And a third, for good measure, so the statistics are not thrown off) Tj ET
+BT /F1 11 Tf 1 0 0 1 84 564 Tm (by having too few lines of plain body text to outweigh anything else.) Tj ET
+endstream
+endobj
+12 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 11 0 R /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R /F4 6 0 R >> >> >>
+endobj
+13 0 obj
+<< /Title (Glossary In Context Test) >>
+endobj
+xref
+0 14
+0000000000 65535 f 
+0000000015 00000 n 
+0000000064 00000 n 
+0000000135 00000 n 
+0000000207 00000 n 
+0000000284 00000 n 
+0000000355 00000 n 
+0000000423 00000 n 
+0000001290 00000 n 
+0000001446 00000 n 
+0000002944 00000 n 
+0000003101 00000 n 
+0000003969 00000 n 
+0000004127 00000 n 
+trailer
+<< /Size 14 /Root 1 0 R /Info 13 0 R >>
+startxref
+4183
+%%EOF

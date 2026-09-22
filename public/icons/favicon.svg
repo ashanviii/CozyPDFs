@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="cozypdf">
+  <defs>
+    <linearGradient id="plate" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1d1815"/><stop offset="1" stop-color="#342821"/>
+    </linearGradient>
+    <linearGradient id="page" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#f4e9d7"/><stop offset="1" stop-color="#dfcdb3"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="url(#plate)"/>
+  <path d="M10 24 31.2 20.8 31.2 47 10 43.2Z" fill="url(#page)"/>
+  <path d="M54 24 32.8 20.8 32.8 47 54 43.2Z" fill="url(#page)" transform="scale(-1,1) translate(-64,0)"/>
+  <g stroke="#96806829" stroke-width="1.6" stroke-linecap="round" opacity=".85">
+    <path d="M13.5 28.6 27.8 26.6M13.5 34 27.8 32M13.5 39.4 27.8 37.4"/>
+    <path d="M50.5 28.6 36.2 26.6M50.5 34 36.2 32M50.5 39.4 36.2 37.4"/>
+  </g>
+  <path d="M30.2 21h3.6v33l-1.8-4.4-1.8 4.4Z" fill="#d68a4a"/>
+</svg>
