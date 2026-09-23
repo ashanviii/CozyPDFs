@@ -1,9 +1,0 @@
-node_modules/
-dist/
-dist-ssr/
-.data/
-*.local
-.DS_Store
-.vite/
-*.tsbuildinfo
-tsconfig.tsbuildinfo
