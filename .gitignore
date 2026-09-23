@@ -1,9 +1,21 @@
-.venv/
+# Python
 __pycache__/
 *.pyc
-.pytest_cache/
-.ruff_cache/
-dist/
+.venv/
 *.egg-info/
-tests/fixtures_out/
-library_data/
+.ruff_cache/
+.pytest_cache/
+
+# Backend runtime data
+backend/data/
+backend/.env
+backend/.previews/
+
+# Node / frontend
+node_modules/
+frontend/dist/
+frontend/*.tsbuildinfo
+
+# Editors / OS
+.DS_Store
+*.log

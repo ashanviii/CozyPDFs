@@ -1,0 +1,38 @@
+[project]
+name = "cozypdfs"
+version = "0.1.0"
+description = "Reconstructs PDF books into clean, reflowable reading experiences."
+readme = "../README.md"
+authors = [
+    { name = "ashanviii", email = "ashanviy@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.141.1",
+    "uvicorn[standard]>=0.53.0",
+    "sqlalchemy>=2.0.43",
+    "alembic>=1.13",
+    "pydantic-settings>=2.6",
+    "itsdangerous>=2.2",
+    "pymupdf>=1.28.2",
+    "python-multipart>=0.0.32",
+]
+
+[build-system]
+requires = ["uv_build>=0.11.22,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "httpx>=0.27",
+    "ruff>=0.16.8",
+]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+# B008: FastAPI's `Depends(...)` in a default argument is the intended
+# idiom, not the anti-pattern this rule targets.
+ignore = ["B008"]

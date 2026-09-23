@@ -2,10 +2,31 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "cozypdfs-web",
+      "name": "backend",
       "runtimeExecutable": "uv",
-      "runtimeArgs": ["run", "uvicorn", "cozypdfs.server.app:app", "--host", "127.0.0.1", "--port", "8000", "--reload", "--reload-dir", "src"],
+      "runtimeArgs": [
+        "run",
+        "--directory",
+        "backend",
+        "uvicorn",
+        "cozypdfs.api.app:app",
+        "--reload",
+        "--port",
+        "8000"
+      ],
       "port": 8000
+    },
+    {
+      "name": "frontend",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "frontend", "run", "dev", "--", "--host"],
+      "port": 5173
+    },
+    {
+      "name": "dir-previews",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": ["run", "--directory", "backend", "python", "-m", "http.server", "8899", "--directory", ".previews"],
+      "port": 8899
     }
   ]
 }
