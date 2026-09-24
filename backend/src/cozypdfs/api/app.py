@@ -2,7 +2,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from cozypdfs.api.routes import books, health, me
+from cozypdfs.api.routes import books, health, me, reader
 from cozypdfs.config import get_settings
 from cozypdfs.db.session import Database
 from cozypdfs.domain import errors
@@ -32,6 +32,7 @@ def create_app(database: Database | None = None) -> FastAPI:
     app.include_router(health.router, prefix="/api")
     app.include_router(me.router, prefix="/api")
     app.include_router(books.router, prefix="/api")
+    app.include_router(reader.router, prefix="/api")
 
     # Registered by exact type, most specific first in effect (Starlette
     # walks each exception's MRO and picks the closest match regardless of

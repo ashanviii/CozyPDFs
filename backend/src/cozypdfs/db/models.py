@@ -76,7 +76,47 @@ class Book(Base):
     dir_storage_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
     dir_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
+    epub_storage_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    epub_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    reader_artifact_storage_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    reader_artifact_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )
+
+
+class ReadingProgress(Base):
+    """One row per (owner, book): the reader's last known position, as the
+    Phase 0 locator (chapterId + blockId + characterOffset). Server-side
+    against the anonymous Identity, never localStorage — same rule as the
+    rest of the library (see Identity's docstring).
+
+    `character_offset` is a documented approximation, not an exact text
+    offset: the frontend derives it from which fraction of the anchor
+    block's rendered box the reading position falls within, not from a
+    real DOM Range/Selection measurement. Good enough to resume "roughly
+    here" on reload; not precise enough for cross-block quote linking.
+    """
+
+    __tablename__ = "reading_progress"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "book_id", name="uq_reading_progress_owner_book"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_id)
+    owner_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("identities.id"), nullable=False, index=True
+    )
+    book_id: Mapped[str] = mapped_column(String(36), ForeignKey("books.id"), nullable=False, index=True)
+
+    chapter_id: Mapped[str] = mapped_column(String(128))
+    block_id: Mapped[str] = mapped_column(String(128))
+    character_offset: Mapped[int] = mapped_column(Integer, default=0)
+    mode: Mapped[str] = mapped_column(String(16), default="scroll")
+
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_now, onupdate=_now
     )

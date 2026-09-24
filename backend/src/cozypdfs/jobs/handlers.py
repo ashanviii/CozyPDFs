@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 
 from cozypdfs.conversion.pipeline import reconstruct_pdf
 from cozypdfs.db.models import Book, BookStatus, Job, JobType
+from cozypdfs.epub.pipeline import build_reader_artifact_and_epub
 from cozypdfs.storage.base import StorageBackend
 
 JobHandler = Callable[[Session, Job, StorageBackend], None]
@@ -64,6 +65,28 @@ def _handle_convert(db: Session, job: Job, storage: StorageBackend) -> None:
 
     book.dir_storage_key = dir_storage_key
     book.dir_version = dir_version
+    book.status = BookStatus.CREATING_EPUB
+    db.flush()
+
+    # Phase 2B: DIR -> reader artifact -> EPUB. Phase 2C's live reader reads
+    # the reader artifact directly (see domain/reader.py) — EPUB stays an
+    # export-only artifact.
+    artifact, epub_bytes = build_reader_artifact_and_epub(document, book_id=book.id, storage=storage)
+
+    epub_version = (book.epub_version or 0) + 1
+    reader_artifact_storage_key = f"books/{book.id}/reader_artifact/v{epub_version}.json"
+    storage.put(
+        reader_artifact_storage_key,
+        artifact.model_dump_json().encode("utf-8"),
+        content_type="application/json",
+    )
+    epub_storage_key = f"books/{book.id}/epub/v{epub_version}.epub"
+    storage.put(epub_storage_key, epub_bytes, content_type="application/epub+zip")
+
+    book.epub_storage_key = epub_storage_key
+    book.epub_version = epub_version
+    book.reader_artifact_storage_key = reader_artifact_storage_key
+    book.reader_artifact_version = epub_version
     book.status = BookStatus.READY
     book.error_message = None
     db.flush()

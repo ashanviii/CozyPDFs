@@ -1,8 +1,8 @@
 """End-to-end integration: upload a real PDF through the same domain
 function the API uses, let the real worker claim and run the real
 `convert` job handler, and confirm the book ends up `ready` with a valid,
-storage-backed DIR — the actual seam Phase 2A was supposed to close (no
-handler was registered for `convert` before this phase)."""
+storage-backed DIR *and* EPUB — the full Phase 2A + Phase 2B pipeline
+running through the actual async job system, not just called directly."""
 
 from pathlib import Path
 
@@ -11,6 +11,7 @@ from cozypdfs.db.models import BookStatus, JobStatus
 from cozypdfs.db.session import Database
 from cozypdfs.dir.schema import DIRDocument
 from cozypdfs.domain import uploads
+from cozypdfs.epub.validation import validate as validate_epub
 from cozypdfs.jobs.worker import run_once
 from cozypdfs.storage.local import LocalDiskStorage
 
@@ -43,6 +44,8 @@ def test_upload_then_worker_run_produces_a_ready_book_with_a_valid_dir(
         assert book.error_message is None
         assert book.dir_storage_key is not None
         assert book.dir_version == 1
+        assert book.epub_storage_key is not None
+        assert book.epub_version == 1
 
         job = session.query(Job).filter(Job.book_id == book_id).one()
         assert job.status == JobStatus.READY
@@ -53,6 +56,9 @@ def test_upload_then_worker_run_produces_a_ready_book_with_a_valid_dir(
     document = DIRDocument.model_validate_json(dir_bytes)
     assert document.chapters
     assert any("bright cold day" in block.content for chapter in document.chapters for block in chapter.blocks)
+
+    epub_bytes = storage.get(book.epub_storage_key)
+    assert validate_epub(epub_bytes) == []
 
 
 def test_retry_after_a_transient_failure_reruns_the_pipeline(

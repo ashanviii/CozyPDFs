@@ -1,8 +1,9 @@
 from datetime import datetime
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
-from cozypdfs.db.models import Book
+from cozypdfs.db.models import Book, ReadingProgress
 
 
 class BookOut(BaseModel):
@@ -30,3 +31,27 @@ class BookOut(BaseModel):
 class UploadResponse(BaseModel):
     book: BookOut
     reused: bool
+
+
+ReaderMode = Literal["scroll", "paginated"]
+
+
+class ProgressIn(BaseModel):
+    chapter_id: str
+    block_id: str
+    character_offset: int = Field(ge=0)
+    mode: ReaderMode
+
+
+class ProgressOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    chapter_id: str
+    block_id: str
+    character_offset: int
+    mode: str
+    updated_at: datetime
+
+    @classmethod
+    def from_model(cls, progress: ReadingProgress) -> "ProgressOut":
+        return cls.model_validate(progress)

@@ -16,6 +16,7 @@ dependencies = [
     "itsdangerous>=2.2",
     "pymupdf>=1.28.2",
     "python-multipart>=0.0.32",
+    "ebooklib>=0.19",
 ]
 
 [build-system]
