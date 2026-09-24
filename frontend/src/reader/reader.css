@@ -1,0 +1,514 @@
+/* Phase 2C presentation layer. Typography/width are exposed as CSS custom
+ * properties that ReaderView sets inline from useReaderPreferences (see
+ * preferences.ts) — this file only defines the defaults and what each
+ * property does, never reads localStorage itself.
+ *
+ * Theme is a separate mechanism: a `--reader-*` palette, scoped to
+ * `.reader` and switched by `data-reader-theme` (set from the same
+ * preferences), deliberately kept independent of App.css's global
+ * `:root` palette — the rest of the app (library) always stays on the
+ * light palette regardless of what the reader is themed to. The default
+ * (light) theme's palette simply reuses the global tokens so it still
+ * matches the rest of the app out of the box. */
+.reader {
+  --reader-font-family: Georgia, "Times New Roman", serif;
+  --reader-font-size: 1.125rem;
+  --reader-line-height: 1.7;
+  --reader-content-width: 680px;
+
+  --reader-bg: var(--bg);
+  --reader-surface: var(--surface);
+  --reader-border: var(--border);
+  --reader-text: var(--text);
+  --reader-text-muted: var(--text-muted);
+  --reader-accent: var(--accent);
+
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: var(--reader-bg);
+  color: var(--reader-text);
+}
+
+.reader[data-reader-theme="sepia"] {
+  --reader-bg: #f4ecd8;
+  --reader-surface: #faf3e0;
+  --reader-border: #e3d5b3;
+  --reader-text: #4a3826;
+  --reader-text-muted: #7a6144;
+  --reader-accent: #8a6a3d;
+}
+
+.reader[data-reader-theme="dark"] {
+  --reader-bg: #1a1a1a;
+  --reader-surface: #242424;
+  --reader-border: #3a3a3a;
+  --reader-text: #e8e6e0;
+  --reader-text-muted: #a3a099;
+  --reader-accent: #d3b06a;
+}
+
+/* "system" tracks the OS scheme: it inherits the light palette above by
+   default, and only overrides to the dark palette under the media query —
+   no JS media-query listener needed. */
+@media (prefers-color-scheme: dark) {
+  .reader[data-reader-theme="system"] {
+    --reader-bg: #1a1a1a;
+    --reader-surface: #242424;
+    --reader-border: #3a3a3a;
+    --reader-text: #e8e6e0;
+    --reader-text-muted: #a3a099;
+    --reader-accent: #d3b06a;
+  }
+}
+
+.reader--status {
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  color: var(--reader-text-muted);
+}
+
+.reader__skip-link {
+  position: absolute;
+  top: -100%;
+  left: 1rem;
+  z-index: 30;
+  background: var(--reader-accent);
+  color: var(--reader-surface);
+  padding: 0.5rem 1rem;
+  border-radius: 0 0 6px 6px;
+  text-decoration: none;
+  font-size: 0.85rem;
+}
+
+.reader__skip-link:focus {
+  top: 0;
+}
+
+.reader__bar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.75rem 1.5rem;
+  border-bottom: 1px solid var(--reader-border);
+  background: var(--reader-surface);
+  flex-shrink: 0;
+}
+
+.reader__back {
+  color: var(--reader-text-muted);
+  text-decoration: none;
+  font-size: 0.9rem;
+  flex-shrink: 0;
+}
+
+.reader__back:hover {
+  color: var(--reader-text);
+}
+
+.reader__title {
+  flex: 1;
+  /* A flex item's default min-width is its content's intrinsic width, not
+     0 — without this, a long title doesn't actually ellipsize on a narrow
+     bar, it forces the whole bar to overflow instead. More pressing now
+     that the bar carries two more buttons than it used to. */
+  min-width: 0;
+  margin: 0;
+  font-weight: 500;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reader__mode-toggle {
+  display: flex;
+  border: 1px solid var(--reader-border);
+  border-radius: 8px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.reader__mode-toggle button {
+  border: none;
+  background: var(--reader-surface);
+  color: var(--reader-text-muted);
+  padding: 0.35rem 0.75rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.reader__mode-toggle button.is-active {
+  background: var(--reader-accent);
+  color: var(--reader-surface);
+}
+
+.reader__chrome-toggle {
+  border: 1px solid var(--reader-border);
+  border-radius: 8px;
+  background: var(--reader-surface);
+  color: var(--reader-text-muted);
+  padding: 0.35rem 0.75rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.reader__chrome-toggle.is-active {
+  background: var(--reader-accent);
+  color: var(--reader-surface);
+  border-color: var(--reader-accent);
+}
+
+.reader__viewport {
+  flex: 1;
+  min-height: 0;
+}
+
+.reader__viewport--scroll {
+  overflow-y: auto;
+}
+
+.reader__viewport--paginated {
+  overflow: hidden;
+  position: relative;
+  /* Lets the browser keep handling vertical gestures (pull-to-refresh,
+     scrollbars) natively while ReaderView's own pointer handlers own
+     horizontal swipes for page turns — without this, touch browsers can
+     interpret an in-progress horizontal drag as their own edge-swipe
+     back/forward navigation instead. */
+  touch-action: pan-y;
+  /* The comfortable reading measure comes from capping THIS box's width
+     (same idea as scroll mode's content max-width), not from padding
+     inside the column box below: CSS multi-column padding wraps only the
+     outside of the whole column flow (visible on the first/last page
+     only, never between pages) — trying to carve a reading margin out of
+     each individual page via padding doesn't work, and was an earlier bug
+     here (every block rendered at the padding-reduced *content*-box width
+     as a single wide column, not one column per page, because that content
+     box was narrower than 2x the intended column-width).
+
+     `width: 100%` is required here, not just max-width: a flex item with
+     horizontal auto margins (for centering) sizes itself by shrink-to-fit
+     instead of stretching to fill the cross axis first — without an
+     explicit width, this reliably rendered narrower than max-width,
+     desyncing the actual box from ReaderView's page-width measurement
+     the same way the earlier bugs on this rule did. */
+  width: 100%;
+  max-width: calc(var(--reader-content-width) + 4rem);
+  margin: 0 auto;
+  /* Page padding lives HERE, not on the multi-column child below — a
+     multi-column box with its own padding was observed to stop wrapping
+     text at column-width entirely (every line rendered at ~the full
+     multi-page width instead), a real bug reproducible only with this
+     exact combination and not isolated further; padding on this
+     non-multicol ancestor sidesteps it while giving the same framed
+     look, since ReaderView measures pageWidth/pageHeight from this
+     element's padded content box (see its clientWidth/clientHeight
+     usage). */
+  padding: 3rem 2rem;
+}
+
+.reader__content {
+  box-sizing: border-box;
+  font-family: var(--reader-font-family);
+  font-size: var(--reader-font-size);
+  line-height: var(--reader-line-height);
+}
+
+.reader__viewport--scroll .reader__content {
+  max-width: var(--reader-content-width);
+  margin: 0 auto;
+  padding: 3rem 2rem 6rem;
+}
+
+.reader__viewport--paginated .reader__content {
+  /* width, height and column-width are set imperatively in ReaderView's
+     layout effect, not here — this box's width has to span *all* its
+     pages side by side (pageWidth * pageCount, not 100%: a multi-column
+     box's own width doesn't auto-grow to fit its columns, an earlier bug
+     here let the next page's content bleed through at the edge).
+     column-fill needs the box's height to be a definite pixel value too
+     (percentage height through this flex-item chain doesn't reliably
+     resolve across browsers), which is also why it's set on the ref, not
+     via height:100% here. No padding here on purpose — see the comment
+     on `.reader__viewport--paginated` above. */
+  column-fill: auto;
+  transition: transform 0.25s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reader__viewport--paginated .reader__content {
+    transition: none;
+  }
+}
+
+.reader-section__title {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-weight: 600;
+  margin: 2rem 0 1rem;
+  break-after: avoid;
+}
+
+.reader-block p,
+.reader-block ul,
+.reader-block ol,
+.reader-block blockquote {
+  margin: 0 0 1.1em;
+}
+
+.reader-block table {
+  border-collapse: collapse;
+  margin: 0 0 1.3em;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 0.92em;
+  break-inside: avoid;
+}
+
+.reader-block table th,
+.reader-block table td {
+  border: 1px solid var(--reader-border);
+  padding: 0.4em 0.75em;
+  text-align: left;
+}
+
+.reader-figure {
+  margin: 0 0 1.3em;
+  text-align: center;
+  break-inside: avoid;
+}
+
+.reader-figure img {
+  max-width: 100%;
+  border-radius: 6px;
+}
+
+/* `break-inside: avoid` above only pushes an oversized figure whole onto
+   the next column — it doesn't stop the image itself overflowing that
+   column if it's taller than one page. --reader-page-height is set
+   imperatively per page-layout pass (see ReaderView); falls back to `none`
+   in Scroll mode, where the property is never set and there's no page to
+   overflow. object-fit keeps the image's aspect ratio once height is what
+   ends up constraining it rather than width. */
+.reader__viewport--paginated .reader-figure img {
+  max-height: var(--reader-page-height, none);
+  object-fit: contain;
+}
+
+.reader-figure figcaption {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 0.85em;
+  font-style: italic;
+  color: var(--reader-text-muted);
+  margin-top: 0.5em;
+}
+
+.reader-footnote {
+  font-size: 0.85em;
+  color: var(--reader-text-muted);
+  border-left: 2px solid var(--reader-border);
+  padding-left: 0.85em;
+  margin: 0 0 1.1em;
+}
+
+.reader__pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1.25rem;
+  padding: 0.6rem;
+  border-top: 1px solid var(--reader-border);
+  background: var(--reader-surface);
+  flex-shrink: 0;
+  font-size: 0.85rem;
+  color: var(--reader-text-muted);
+}
+
+.reader__pager button {
+  border: 1px solid var(--reader-border);
+  background: var(--reader-bg);
+  color: var(--reader-text);
+  border-radius: 6px;
+  padding: 0.3rem 0.7rem;
+  cursor: pointer;
+}
+
+.reader__pager button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* TOC and display-settings drawers (ReaderNav / ReaderSettingsPanel).
+   Fixed-position side panels rather than inline layout so they overlay the
+   reading column without reflowing it — on a narrow viewport the capped
+   width below already approximates a full-screen overlay on its own,
+   ahead of the dedicated mobile pass. */
+.reader-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  z-index: 20;
+}
+
+.reader-drawer {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  width: min(340px, 90vw);
+  background: var(--reader-surface);
+  color: var(--reader-text);
+  z-index: 21;
+  overflow-y: auto;
+  padding: 1.25rem;
+  box-shadow: 0 0 24px rgba(0, 0, 0, 0.15);
+}
+
+.reader-drawer--nav {
+  left: 0;
+  border-right: 1px solid var(--reader-border);
+}
+
+.reader-drawer--settings {
+  right: 0;
+  border-left: 1px solid var(--reader-border);
+}
+
+.reader-drawer__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 0.75rem;
+  margin-bottom: 1rem;
+  border-bottom: 1px solid var(--reader-border);
+}
+
+.reader-drawer__title {
+  margin: 0;
+  font-weight: 600;
+}
+
+.reader-drawer__close {
+  border: none;
+  background: none;
+  color: var(--reader-text-muted);
+  font-size: 1.3rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0.15rem 0.4rem;
+}
+
+.reader-drawer__close:hover {
+  color: var(--reader-text);
+}
+
+.reader-nav__list {
+  list-style: none;
+  margin: 0;
+  padding-left: 0;
+}
+
+.reader-nav__list .reader-nav__list {
+  padding-left: 1rem;
+}
+
+.reader-nav__item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: none;
+  color: var(--reader-text);
+  padding: 0.4rem 0.25rem;
+  font-size: 0.9rem;
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.reader-nav__item:hover {
+  background: var(--reader-bg);
+}
+
+.reader-settings__group {
+  border: none;
+  padding: 0;
+  margin: 0 0 1.25rem;
+}
+
+.reader-settings__group legend {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--reader-text-muted);
+  margin-bottom: 0.5rem;
+  padding: 0;
+}
+
+.reader-settings__options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.reader-settings__option {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.reader-settings__option label {
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+/* Narrow viewports: the bar now carries five interactive elements where it
+   used to carry three, so it needs tighter spacing to avoid wrapping or
+   overflowing; buttons grow instead of shrinking, since touch targets
+   should never get *smaller* on the layout most likely to be touch. 44px
+   matches the iOS HIG / WCAG 2.5.5 (AAA) minimum — deliberately more than
+   WCAG 2.2's own 24px AA floor, since these controls are read one-handed. */
+@media (max-width: 640px) {
+  .reader__bar {
+    gap: 0.5rem;
+    padding: 0.6rem 0.85rem;
+  }
+
+  .reader__title {
+    font-size: 0.9rem;
+  }
+
+  .reader__chrome-toggle,
+  .reader__mode-toggle button {
+    padding: 0.5rem 0.6rem;
+    min-height: 44px;
+  }
+
+  .reader__viewport--paginated {
+    padding: 1.5rem 1.25rem;
+  }
+
+  .reader__pager {
+    gap: 0.75rem;
+  }
+
+  .reader__pager button {
+    min-height: 44px;
+    padding: 0.4rem 0.9rem;
+  }
+
+  .reader-drawer__close {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .reader-nav__item {
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+  }
+
+  .reader-settings__option {
+    min-height: 44px;
+  }
+}

@@ -1,6 +1,8 @@
 /** Thin fetch wrapper for the backend API. All backend access goes through
  * this module — no component should call `fetch` directly. */
 
+import type { ReaderArtifact, ReadingLocator, ReadingProgress } from "../reader/types";
+
 const BASE_URL = "/api";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -59,6 +61,13 @@ export interface UploadResponse {
   reused: boolean;
 }
 
+/** Not proxied through `request` — this is a plain <img src> URL, not a
+ * JSON fetch, and must stay a same-origin relative path so the browser
+ * attaches the httponly identity cookie automatically. */
+export function assetUrl(bookId: string, assetId: string): string {
+  return `${BASE_URL}/books/${bookId}/assets/${assetId}`;
+}
+
 export const api = {
   health: () => request<HealthResponse>("/health"),
   me: () => request<MeResponse>("/me"),
@@ -72,4 +81,13 @@ export const api = {
   },
   retryBook: (id: string) => request<Book>(`/books/${id}/retry`, { method: "POST" }),
   deleteBook: (id: string) => request<void>(`/books/${id}`, { method: "DELETE" }),
+
+  getReaderArtifact: (bookId: string) => request<ReaderArtifact>(`/books/${bookId}/reader-artifact`),
+  getProgress: (bookId: string) => request<ReadingProgress>(`/books/${bookId}/progress`),
+  saveProgress: (bookId: string, locator: ReadingLocator) =>
+    request<ReadingProgress>(`/books/${bookId}/progress`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(locator),
+    }),
 };

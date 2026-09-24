@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import type { Book } from "../lib/api";
 
 const STATUS_LABEL: Record<Book["status"], string> = {
@@ -17,11 +18,21 @@ interface BookCardProps {
 
 export function BookCard({ book, onRetry, onDelete }: BookCardProps) {
   const title = book.title?.trim() || book.source_filename;
+  const isReady = book.status === "ready";
 
   return (
     <div className={`book-card book-card--${book.status}`}>
-      <div className="book-card__cover" aria-hidden="true" />
-      <p className="book-card__title">{title}</p>
+      {isReady ? (
+        <Link to={`/read/${book.id}`} className="book-card__open">
+          <div className="book-card__cover" aria-hidden="true" />
+          <p className="book-card__title">{title}</p>
+        </Link>
+      ) : (
+        <>
+          <div className="book-card__cover" aria-hidden="true" />
+          <p className="book-card__title">{title}</p>
+        </>
+      )}
       {book.author && <p className="book-card__author">{book.author}</p>}
       <p className="book-card__status">{STATUS_LABEL[book.status]}</p>
       {book.status === "failed" && book.error_message && (
